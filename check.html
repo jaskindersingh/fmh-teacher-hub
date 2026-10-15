@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>FMH Teacher Hub - connection check</title>
+<style>
+body{margin:0;background:#eef1f6;color:#182230;font:17px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.card{max-width:520px;margin:40px auto;background:#fff;border-radius:16px;padding:22px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h1{font-size:20px;margin:0 0 12px}
+#s{font-weight:700}.ok{color:#2e9b6b}.bad{color:#c2410c}
+small{color:#5b6a80;display:block;margin-top:12px}
+a{color:#2f6fd0}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>FMH Teacher Hub - connection check</h1>
+  <div id="s">Checking…</div>
+  <small id="d"></small>
+  <small><a href="./">Back to the Teacher Hub</a></small>
+</div>
+<script>
+/* Makes one harmless, cookie-free request (no session) and shows whether the
+   Teacher Hub server can be reached from this browser. Sends no email. */
+(function () {
+  var API = 'https://script.google.com/macros/s/AKfycbyfhrKzPsWnKmLl7YSM9TOG8tByNB0oOIHhRHCvXmJpk6egcuJq-BhbQy7jPIqBTYFC/exec';
+  var s = document.getElementById('s'), d = document.getElementById('d'), t0 = Date.now();
+  fetch(API, {
+    method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'follow', referrerPolicy: 'no-referrer',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ fn: 'apiStart', args: [null, 'connection.check'] })
+  }).then(function (r) {
+    var host = ''; try { host = new URL(r.url).host; } catch (e) {}
+    return r.json().then(function (j) { return { r: r, j: j, host: host }; });
+  }).then(function (x) {
+    var good = x.r.ok && x.j && x.j.ok === false && x.j.auth === true;
+    s.className = good ? 'ok' : 'bad';
+    s.textContent = good ? 'Connection OK - the Teacher Hub server answered.' : 'Unexpected answer from the server.';
+    d.textContent = 'Status ' + x.r.status + ', answered by ' + x.host + ' in ' + (Date.now() - t0) + ' ms, no Google sign-in used.';
+  }).catch(function (e) {
+    s.className = 'bad'; s.textContent = 'Could not reach the Teacher Hub server.';
+    d.textContent = String(e);
+  });
+})();
+</script>
+</body>
+</html>
