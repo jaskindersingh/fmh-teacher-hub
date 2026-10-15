@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src data: blob:; connect-src https://script.google.com https://script.googleusercontent.com https://cdnjs.cloudflare.com; worker-src blob:; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="robots" content="noindex, nofollow">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -16,13 +17,14 @@
    This replaces only the connection layer of the existing Hub page.
    Requests go to the Hub backend WITHOUT Google cookies (credentials: 'omit'),
    so it works whatever Google accounts are signed in to this browser.
-   Sign-in is the FMH email + 6-digit code. Every permission is decided on the
-   server; nothing here is trusted for identity or grade access. */
+   Sign-in is the FMH email + 6-digit code; the signed session is then kept in
+   this browser for 30 days (trusted device) until Sign out. Every permission is
+   decided on the server; nothing here is trusted for identity or grade access. */
 (function () {
   var API = 'https://script.google.com/macros/s/AKfycbyfhrKzPsWnKmLl7YSM9TOG8tByNB0oOIHhRHCvXmJpk6egcuJq-BhbQy7jPIqBTYFC/exec';
   // The Hub operations this page uses. The server has its own hardcoded allow-list.
   var OPS = ['apiStart', 'apiRequestCode', 'apiVerifyCode', 'apiGrade', 'apiStudent',
-             'apiAssign', 'apiCancel', 'apiReviewOptions', 'apiReview', 'apiSolution'];
+             'apiAssign', 'apiCancel', 'apiReviewOptions', 'apiReview', 'apiSolution', 'apiSignOut'];
   function send(op, args, ok, bad) {
     fetch(API, {
       method: 'POST',
@@ -184,20 +186,39 @@ function call(fn) {
     r[fn].apply(r, args);
   });
 }
-function store(v) { try { if (v) sessionStorage.setItem('fmhTH', v); else sessionStorage.removeItem('fmhTH'); } catch (e) {} }
-function stored() { try { return sessionStorage.getItem('fmhTH'); } catch (e) { return null; } }
+/* The session is kept in this browser for 30 days (trusted device) until Sign out. The server re-checks it on every request. */
+function store(v) {
+  try { if (v) localStorage.setItem('fmhTH', v); else localStorage.removeItem('fmhTH'); } catch (e) {}
+  try { sessionStorage.removeItem('fmhTH'); } catch (e) {}
+}
+function stored() {
+  var v = null;
+  try { v = localStorage.getItem('fmhTH'); } catch (e) {}
+  if (!v) try { v = sessionStorage.getItem('fmhTH'); } catch (e) {}   // sessions from before Oct 14
+  return v;
+}
+/* A sign-in in progress (email + request id, never the code) is remembered in this tab for 15 minutes, so switching
+   to the mail app, reloading, or asking again keeps the same request and the code already emailed keeps working. */
+function pendSet(email, rid) { try { if (email) sessionStorage.setItem('fmhTHp', JSON.stringify({ e: email, r: rid, t: Date.now() })); else sessionStorage.removeItem('fmhTHp'); } catch (e) {} }
+function pendGet(email) {
+  try {
+    var p = JSON.parse(sessionStorage.getItem('fmhTHp') || 'null');
+    if (p && p.e && /^[0-9a-f]{32}$/.test(p.r) && Date.now() - p.t < 15 * 60000 && (!email || p.e.toLowerCase() === String(email).trim().toLowerCase())) return p;
+  } catch (e) {}
+  return null;
+}
 
 /* ---------- start ---------- */
 function boot() {
   var s = stored();
-  if (!s) { emailStep(''); return; }
+  if (!s) { var p = pendGet(''); if (p) codeStep(p.e, p.r, 'Type the 6-digit code from your email.'); else emailStep(''); return; }
   loading('Signing you in…');
   call('apiStart', null, s).then(function (r) { r.ok ? started(r) : signedOut(r.msg); });
 }
 function started(r) {
-  S.session = r.session; S.me = r.me; store(r.session);
+  S.session = r.session; S.me = r.me; store(r.session); pendSet(null);
   clear($('who')); add($('who'), [h('div', { text: 'Signed in as' }), h('div', { cls: 'nm', text: S.me.email }),
-    h('button', { cls: 'out', text: 'Sign out', onclick: function () { signedOut('You are signed out.'); } })]);
+    h('button', { cls: 'out', text: 'Sign out', onclick: function () { var s = S.session; pendSet(null); if (s) call('apiSignOut', s); signedOut('You are signed out on this device.'); } })]);
   var codes = S.me.grades.map(function (g) { return g.code; });
   if (codes.indexOf(S.grade) < 0) S.grade = codes.length === 1 ? codes[0] : '';
   render();
@@ -223,7 +244,8 @@ function emailStep(email, msg) {
       var v = inp.value.trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { note.className = 'msg bad'; note.textContent = 'Please type your full FMH email address.'; return; }
       go.disabled = true; go.textContent = 'Sending…';
-      call('apiRequestCode', v).then(function (r) {
+      var p = pendGet(v);
+      call('apiRequestCode', v, p ? p.r : '').then(function (r) {
         if (r.ok) { codeStep(v, r.rid, r.msg); return; }
         go.disabled = false; go.textContent = 'Email me a code'; note.className = 'msg bad'; note.textContent = r.msg || 'Please try again.';
       });
@@ -242,11 +264,12 @@ function codeStep(email, rid, msg) {
   var go = h('button', { cls: 'btn primary', type: 'submit', text: 'Sign in' });
   var again = h('button', { type: 'button', text: 'Send a new code', onclick: function () {
       again.disabled = true;
-      call('apiRequestCode', email).then(function (r) { if (r.ok && r.rid) rid = r.rid; note.className = r.ok ? 'msg' : 'msg bad'; note.textContent = r.msg || ''; wait(); });
+      call('apiRequestCode', email, rid).then(function (r) { if (r.ok && r.rid) { rid = r.rid; pendSet(email, rid); } note.className = r.ok ? 'msg' : 'msg bad'; note.textContent = r.msg || ''; wait(); });
     } });
-  var other = h('button', { type: 'button', text: 'Use a different email', onclick: function () { emailStep(''); } });
+  var other = h('button', { type: 'button', text: 'Use a different email', onclick: function () { pendSet(null); emailStep(''); } });
+  pendSet(email, rid);
   function wait() {
-    var n = 45; again.disabled = true; again.textContent = 'Send a new code (' + n + ')';
+    var n = 30; again.disabled = true; again.textContent = 'Send a new code (' + n + ')';
     var t = setInterval(function () { n--; if (n <= 0 || !document.body.contains(again)) { clearInterval(t); again.disabled = false; again.textContent = 'Send a new code'; } else again.textContent = 'Send a new code (' + n + ')'; }, 1000);
   }
   inp.addEventListener('input', function () { var d = inp.value.replace(/\D/g, '').slice(0, 6); if (d !== inp.value) inp.value = d; });
@@ -265,7 +288,8 @@ function codeStep(email, rid, msg) {
     h('p', null, 'Signing in as ', h('span', { cls: 'em', text: email })),
     h('label', { 'for': 'cd', text: '6-digit code from the email' }), inp, note, go,
     h('div', { cls: 'links' }, again, other),
-    h('p', { cls: 'sub', text: 'The code works once, only on this page, and expires after ' + (BOOT.codeMinutes || 10) + ' minutes. Use the newest email. Check Spam if it does not arrive.' }));
+    h('p', { cls: 'sub', text: 'The code works once, only in this browser, for ' + (BOOT.codeMinutes || 10) + ' minutes. Asking again re-sends the same code. Check Spam if it does not arrive.' }),
+    h('p', { cls: 'sub', text: 'After you sign in, this browser stays signed in for 30 days. On a shared computer, tap Sign out when you finish.' }));
   add(scr, h('div', { cls: 'card signin' }, form));
   wait();
   setTimeout(function () { try { inp.focus(); } catch (e) {} }, 50);
@@ -509,12 +533,14 @@ function loadPdfJs() {
   if (window.__pdfReady) return window.__pdfReady;
   window.__pdfReady = new Promise(function (resolve, reject) {
     var s = document.createElement('script'); s.src = PDFJS + 'pdf.min.js';
+    s.integrity = 'sha512-q+4liFwdPC/bNdhUpZx6aXDx/h77yEQtn4I1slHydcbZK34nLaR3cAeYSJshoxIOq3mjEf7xJE8YWIUHMn+oCQ=='; s.crossOrigin = 'anonymous';
     s.onload = function () {
       var lib = window.pdfjsLib;
-      fetch(PDFJS + 'pdf.worker.min.js').then(function (r) { return r.text(); }).then(function (txt) {
+      fetch(PDFJS + 'pdf.worker.min.js', { integrity: 'sha512-BbrZ76UNZq5BhH7LL7pn9A4TKQpQeNCHOo65/akfelcIBbcVvYWOFQKPXIrykE3qZxYjmDX573oa4Ywsc7rpTw==', credentials: 'omit' })
+        .then(function (r) { if (!r.ok) throw new Error('worker'); return r.text(); }).then(function (txt) {
         lib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([txt], { type: 'text/javascript' }));
         resolve(lib);
-      }).catch(function () { lib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; resolve(lib); });
+      }).catch(function () { window.__pdfReady = null; reject(new Error('viewer')); });   // file not exactly as expected: do not run it
     };
     s.onerror = function () { window.__pdfReady = null; reject(new Error('viewer')); };
     document.head.appendChild(s);
