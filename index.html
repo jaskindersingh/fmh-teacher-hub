@@ -334,6 +334,8 @@ function shownStudents() {
 }
 function picked() { return S.gd.students.filter(function (s) { return S.pick[s.name]; }); }
 function tpicked() { return S.gd.tests.filter(function (t) { return S.tpick[t.num]; }); }
+/* Teacher-facing homework name from the server ("Homework 1 (1.1 + 1.2)"); plain "Homework N" if not known. Display only. */
+function hwLabel(num) { var t = S.gd && S.gd.tests.filter(function (x) { return x.num === String(num); })[0]; return t ? t.label : 'Homework ' + num; }
 
 function renderAssign(pane) {
   if (!S.gd || S.gd.grade !== S.grade) return;
@@ -373,7 +375,7 @@ function drawStudents() {
 function drawTests() {
   var el = $('tlist'); if (!el) return; clear(el);
   var q = S.tq.trim().toLowerCase(), sel = picked();
-  var list = S.gd.tests.filter(function (t) { return !q || ('hw ' + t.num + ' homework ' + t.num + ' ' + t.topic).toLowerCase().indexOf(q) >= 0 || t.num === q; });
+  var list = S.gd.tests.filter(function (t) { return !q || ('hw ' + t.num + ' ' + t.label + ' ' + t.topic).toLowerCase().indexOf(q) >= 0 || t.num === q; });
   if (!list.length) { add(el, h('div', { cls: 'item sub', text: 'No homework matches.' })); return; }
   list.forEach(function (t) {
     var on = !!S.tpick[t.num];
@@ -417,8 +419,8 @@ function confirmAssign() {
       clear(box);
       if (!r.ok) { add(box, h('h3', { text: 'Not assigned' }), h('div', { cls: 'msg bad', text: r.msg }), h('button', { cls: 'btn', text: 'Close', onclick: function () { clear(host); if (r.grade) gradeProblem(r); } })); return; }
       add(box, h('h3', { text: r.assigned.length ? '✅ Assigned ' + r.assigned.length + ' homework' : 'Nothing new assigned' }));
-      if (r.assigned.length) add(box, h('div', { cls: 'msg' }, r.assigned.map(function (a) { return h('div', { text: a.name + ' — Homework ' + a.num }); })));
-      if (r.skipped.length) add(box, h('h2', { text: 'Skipped' }), h('div', { cls: 'msg bad' }, r.skipped.map(function (a) { return h('div', { text: a.name + (a.num ? ' — Homework ' + a.num : '') + ': ' + a.why }); })));
+      if (r.assigned.length) add(box, h('div', { cls: 'msg' }, r.assigned.map(function (a) { return h('div', { text: a.name + ' — ' + hwLabel(a.num) }); })));
+      if (r.skipped.length) add(box, h('h2', { text: 'Skipped' }), h('div', { cls: 'msg bad' }, r.skipped.map(function (a) { return h('div', { text: a.name + (a.num ? ' — ' + hwLabel(a.num) : '') + ': ' + a.why }); })));
       add(box, h('button', { cls: 'btn primary', text: 'Done', onclick: function () { clear(host); S.pick = {}; S.tpick = {}; openGrade(S.grade); } }));
     });
   });
